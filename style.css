@@ -1,0 +1,47 @@
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #f8f9fa;
+}
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+.modal-content {
+    background: white;
+    padding: 2rem;
+    border-radius: 0.5rem;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+/* Default modal size */
+.modal-content {
+    max-width: 500px;
+}
+
+/* Wider modal for user profile */
+.modal-content.modal-lg {
+    max-width: 800px;
+}
+
+#map {
+    height: 400px;
+    border-radius: 0.5rem;
+    z-index: 10;
+}
+
+/* Map for location picking in profile */
+#location-picker-map {
+    height: 300px;
+    border-radius: 0.5rem;
+    z-index: 1050; /* Ensure it's above the modal content */
+}
