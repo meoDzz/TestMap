@@ -9,7 +9,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyAaEbEL47oisvZQfIm5cntWyC-rWBFsX9Y",
   authDomain: "authenticcheck-2d92e.firebaseapp.com",
   projectId: "authenticcheck-2d92e",
-  storageBucket: "authenticcheck-2d92e.appspot.com",
+  storageBucket: "authenticcheck-2d92e.firebasestorage.app",
   messagingSenderId: "59677864339",
   appId: "1:59677864339:web:a714223d2de9d26c28b866",
   measurementId: "G-Y72RRTY1G6"
