@@ -2,9 +2,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 // NEW: Import Firestore and add addDoc for subcollections
-import { getFirestore, collection, getDocs, doc, setDoc, getDoc, query, where, updateDoc, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, collection, getDocs, doc, setDoc, getDoc, query, where, updateDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 // NEW: Import Storage modules
-import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 const firebaseConfig = {
   apiKey: "AIzaSyAaEbEL47oisvZQfIm5cntWyC-rWBFsX9Y",
   authDomain: "authenticcheck-2d92e.firebaseapp.com",
@@ -142,11 +142,14 @@ const openPublicProfileModal = async (userId) => {
     const userDocRef = doc(db, "users", userId);
     
     const portfolioQuery = query(collection(db, "professionals", userId, "portfolio"));
+    // ✅ Thêm query để tải reviews
+    const reviewsQuery = query(collection(db, "reviews"), where("talentId", "==", userId));
     
-    const [profDoc, userDoc, portfolioSnapshot] = await Promise.all([
+    const [profDoc, userDoc, portfolioSnapshot, reviewsSnapshot] = await Promise.all([
         getDoc(profDocRef), 
         getDoc(userDocRef),
-        getDocs(portfolioQuery)
+        getDocs(portfolioQuery),
+        getDocs(reviewsQuery) // ✅ Tải reviews
     ]);
     if (!profDoc.exists() || !userDoc.exists()) {
         alert("Could not find profile details.");
@@ -156,6 +159,7 @@ const openPublicProfileModal = async (userId) => {
     const prof = { id: profDoc.id, ...profDoc.data() };
     const user = userDoc.data();
     const portfolioItems = portfolioSnapshot.docs.map(doc => doc.data());
+    const reviews = reviewsSnapshot.docs.map(doc => doc.data());
     const modalContainer = document.getElementById('public-profile-modal');
     modalContainer.innerHTML = `
         <div class="modal-content">
@@ -166,11 +170,38 @@ const openPublicProfileModal = async (userId) => {
             <h4 class="font-semibold mt-4">About Me</h4>
             <p class="mb-4 text-gray-700">${prof.bio || 'No bio provided.'}</p>
             
+            ${
+                // Chỉ hiển thị mục này nếu có ít nhất 1 link
+                prof.socials && Object.values(prof.socials).some(link => link) ? `
+                <h4 class="font-semibold mt-4">Find me on</h4>
+                <div class="flex space-x-4 mt-2 mb-4">
+                    ${prof.socials.facebook ? `<a href="${prof.socials.facebook}" target="_blank" title="Facebook" class="text-gray-500 hover:text-blue-600"><i data-lucide="facebook" class="w-6 h-6"></i></a>` : ''}
+                    ${prof.socials.x ? `<a href="${prof.socials.x}" target="_blank" title="X (Twitter)" class="text-gray-500 hover:text-black"><i data-lucide="twitter" class="w-6 h-6"></i></a>` : ''}
+                    ${prof.socials.instagram ? `<a href="${prof.socials.instagram}" target="_blank" title="Instagram" class="text-gray-500 hover:text-pink-500"><i data-lucide="instagram" class="w-6 h-6"></i></a>` : ''}
+                    ${prof.socials.youtube ? `<a href="${prof.socials.youtube}" target="_blank" title="YouTube" class="text-gray-500 hover:text-red-600"><i data-lucide="youtube" class="w-6 h-6"></i></a>` : ''}
+                    ${prof.socials.threads ? `<a href="${prof.socials.threads}" target="_blank" title="Threads" class="text-gray-500 hover:text-gray-900"><i data-lucide="at-sign" class="w-6 h-6"></i></a>` : ''}
+                </div>
+                ` : ''
+            }
+            <h4 class="font-semibold mt-4">Reviews (${prof.reviewCount || 0})</h4>
+            <div class="mt-2 space-y-4 max-h-48 overflow-y-auto pr-2">
+                ${reviews.length > 0 ? reviews.map(review => `
+                    <div class="border-b pb-2">
+                        <div class="flex justify-between items-center">
+                            <p class="font-semibold">${review.clientName}</p>
+                            <div class="flex">
+                                ${createStarRating(review.rating)}
+                            </div>
+                        </div>
+                        <p class="text-sm text-gray-600 mt-1">${review.note}</p>
+                    </div>
+                `).join('') : '<p class="text-sm text-gray-500 col-span-full">No reviews yet.</p>'}
+            </div>
             <h4 class="font-semibold mt-4">Portfolio</h4>
             <div class="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2">
                 ${portfolioItems.length > 0 ? portfolioItems.map(item => `
                     <div class="relative group">
-                        <img src="${item.imageUrl}" alt="Portfolio photo" class="w-full h-28 object-cover rounded-md">
+                        <img src="${item.imageUrl}" alt="Portfolio photo" class="w-full h-28 object-cover rounded-md zoomable-img cursor-zoom-in">
                         <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white p-1 text-xs rounded-b-md opacity-0 group-hover:opacity-100 transition-opacity">
                             <p>${item.location}</p>
                             <p>${item.date}</p>
@@ -311,6 +342,8 @@ const loadAndRenderBookings = async (user) => {
                      ${booking.status === 'pending' ? `
                         <button class="accept-btn bg-green-500 text-white px-3 py-1 rounded-full text-sm hover:bg-green-600" data-booking-id="${booking.id}">Accept</button>
                         <button class="reject-btn bg-red-500 text-white px-3 py-1 rounded-full text-sm hover:bg-red-600" data-booking-id="${booking.id}">Reject</button>
+                     ` : booking.status === 'accepted' ? `
+                        <button class="complete-btn bg-blue-500 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-600" data-booking-id="${booking.id}">Mark as Complete</button>
                      ` : `
                         <p class="text-sm font-semibold capitalize px-2 py-1 rounded-full ${getStatusBadge(booking.status)}">${booking.status}</p>
                      `}
@@ -325,7 +358,7 @@ const loadAndRenderBookings = async (user) => {
 };
 
 
-// CHANGED: Heavily modified to support talent/client booking views
+
 
 const openMyProfileModal = async () => {
     const user = auth.currentUser;
@@ -343,53 +376,54 @@ const openMyProfileModal = async () => {
     
     const userData = userDoc.exists() ? userDoc.data() : {};
     const profData = profDoc.exists() ? profDoc.data() : {};
-    const portfolioItems = portfolioSnapshot.docs.map(doc => doc.data());
-
+    const portfolioItems = portfolioSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    
     const modalContainer = document.getElementById('user-profile-modal');
+    
     modalContainer.innerHTML = `
         <div class="modal-content modal-lg">
-             <div class="flex justify-between items-center mb-6">
-                <h2 class="text-2xl font-bold">My Profile</h2>
+             <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h2 class="text-xl font-bold">My Profile</h2>
                 <button class="close-modal-btn text-2xl">&times;</button>
-            </div>
+             </div>
             
-            <form id="personal-info-form">
-                <h3 class="text-lg font-semibold mb-2 border-b pb-2">Personal Information</h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+             <form id="personal-info-form">
+                <h3 class="text-lg font-semibold">Personal Information</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
-                        <label class="block text-sm font-medium">Full Name</label>
-                        <input type="text" id="profile-name" value="${user.displayName || ''}" class="w-full mt-1 border-gray-300 rounded-md" disabled>
-                    </div>
-                     <div>
-                        <label class="block text-sm font-medium">Email</label>
-                        <input type="text" value="${user.email || ''}" class="w-full mt-1 border-gray-300 rounded-md" disabled>
+                        <label for="profile-name" class="block text-sm font-medium">Name</label>
+                        <input type="text" id="profile-name" value="${user.displayName || ''}" class="w-full mt-1 border-gray-300 rounded-md bg-gray-100" readonly>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium">Phone Number</label>
+                        <label for="profile-email" class="block text-sm font-medium">Email</label>
+                        <input type="email" id="profile-email" value="${user.email || ''}" class="w-full mt-1 border-gray-300 rounded-md bg-gray-100" readonly>
+                    </div>
+                    <div>
+                        <label for="profile-phone" class="block text-sm font-medium">Phone</label>
                         <input type="tel" id="profile-phone" value="${userData.phone || ''}" class="w-full mt-1 border-gray-300 rounded-md">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium">Date of Birth</label>
+                        <label for="profile-dob" class="block text-sm font-medium">Date of Birth</label>
                         <input type="date" id="profile-dob" value="${userData.dob || ''}" class="w-full mt-1 border-gray-300 rounded-md">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium">Role</label>
+                        <label for="user-role" class="block text-sm font-medium">Role</label>
                         <select id="user-role" class="w-full mt-1 border-gray-300 rounded-md">
-                            <option value="user" ${userData.role === 'user' ? 'selected' : ''}>User</option>
-                            <option value="talent" ${userData.role === 'talent' ? 'selected' : ''}>Talent</option>
+                            <option value="user" ${userData.role === 'user' ? 'selected' : ''}>I'm a User</option>
+                            <option value="talent" ${userData.role === 'talent' ? 'selected' : ''}>I'm a Talent</option>
                         </select>
                     </div>
                 </div>
-                <div class="mt-4 flex justify-end">
+                <div class="text-right mt-4">
                     <button type="submit" class="bg-black text-white px-4 py-2 rounded-full">Save Personal Info</button>
                 </div>
             </form>
 
             <form id="become-talent-form" class="mt-8 ${userData.role !== 'talent' ? 'hidden' : ''}">
-                 <h3 class="text-lg font-semibold mb-2 border-b pb-2">Become a Talent</h3>
-                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                 <h3 class="text-lg font-semibold border-t pt-4">Talent Profile</h3>
+                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
                     <div>
-                        <label class="block text-sm font-medium">Service Type</label>
+                        <label for="talent-service" class="block text-sm font-medium">Service</label>
                         <select id="talent-service" class="w-full mt-1 border-gray-300 rounded-md">
                             <option value="photographer" ${profData.service === 'photographer' ? 'selected' : ''}>Photographer</option>
                             <option value="guide" ${profData.service === 'guide' ? 'selected' : ''}>Tour Guide</option>
@@ -397,20 +431,53 @@ const openMyProfileModal = async () => {
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium">Price per hour ($)</label>
-                        <input type="number" id="talent-price" value="${profData.price || ''}" min="0" class="w-full mt-1 border-gray-300 rounded-md">
-                    </div>
-                    <div class="col-span-2">
-                        <label class="block text-sm font-medium">Bio / Description of your service</label>
-                        <textarea id="talent-bio" class="w-full mt-1 border-gray-300 rounded-md" rows="3">${profData.bio || ''}</textarea>
-                    </div>
-                     <div class="col-span-2">
-                        <label class="block text-sm font-medium">Your working location (Drag the marker)</label>
-                        <div id="location-picker-map" class="mt-2"></div>
+                        <label for="talent-price" class="block text-sm font-medium">Price (USD/hr)</label>
+                        <input type="number" id="talent-price" value="${profData.price || ''}" class="w-full mt-1 border-gray-300 rounded-md">
                     </div>
                  </div>
-                 <div class="mt-4 flex justify-end">
-                    <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-full">Save Talent Profile</button>
+                 <div class="mt-4">
+                    <label for="talent-bio" class="block text-sm font-medium">Bio</label>
+                    <textarea id="talent-bio" rows="3" class="w-full mt-1 border-gray-300 rounded-md">${profData.bio || ''}</textarea>
+                 </div>
+
+                 <div class="mt-4">
+                    <h4 class="text-md font-semibold">Social Links (Optional)</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 mt-2">
+                        
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="facebook" class="w-5 h-5 text-gray-500"></i>
+                            <input type="url" id="social-facebook" placeholder="https://facebook.com/..." class="w-full text-sm border-gray-300 rounded-md" value="${profData.socials?.facebook || ''}">
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="twitter" class="w-5 h-5 text-gray-500"></i>
+                            <input type="url" id="social-twitter" placeholder="https://twitter.com/..." class="w-full text-sm border-gray-300 rounded-md" value="${profData.socials?.x || ''}">
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="instagram" class="w-5 h-5 text-gray-500"></i>
+                            <input type="url" id="social-instagram" placeholder="https://instagram.com/..." class="w-full text-sm border-gray-300 rounded-md" value="${profData.socials?.instagram || ''}">
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="youtube" class="w-5 h-5 text-gray-500"></i>
+                            <input type="url" id="social-youtube" placeholder="https://youtube.com/..." class="w-full text-sm border-gray-300 rounded-md" value="${profData.socials?.youtube || ''}">
+                        </div>
+                        
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="at-sign" class="w-5 h-5 text-gray-500"></i>
+                            <input type="url" id="social-threads" placeholder="https://threads.net/..." class="w-full text-sm border-gray-300 rounded-md" value="${profData.socials?.threads || ''}">
+                        </div>
+
+                    </div>
+                 </div>
+
+                 <div class="mt-4">
+                    <label class="block text-sm font-medium">My Location (Drag marker to set)</label>
+                    <div id="location-picker-map" class="w-full mt-1" style="height: 200px; z-index: 1050;"></div>
+                 </div>
+                 <div class="text-right mt-4">
+                    <button type="submit" class="bg-black text-white px-4 py-2 rounded-full">Save Talent Profile</button>
                 </div>
             </form>
             
@@ -419,10 +486,14 @@ const openMyProfileModal = async () => {
                     <h3 class="text-lg font-semibold">My Portfolio</h3>
                     <button id="add-portfolio-btn" class="bg-blue-500 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-600">Add Photo</button>
                 </div>
+                
                 <div id="portfolio-gallery" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
                     ${portfolioItems.length > 0 ? portfolioItems.map(item => `
                         <div class="relative group">
-                            <img src="${item.imageUrl}" alt="Portfolio photo" class="w-full h-32 object-cover rounded-md">
+<img src="${item.imageUrl}" alt="Portfolio photo" class="w-full h-32 object-cover rounded-md zoomable-img cursor-zoom-in">                            <div class="absolute top-0 right-0 p-1 bg-black bg-opacity-50 rounded-bl-md z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button class="edit-portfolio-btn p-1 text-white hover:text-yellow-400" data-id="${item.id}"><i data-lucide="edit-2" class="w-4 h-4 pointer-events-none"></i></button>
+                                <button class="delete-portfolio-btn p-1 text-white hover:text-red-500" data-id="${item.id}"><i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i></button>
+                            </div>
                             <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white p-2 text-xs rounded-b-md">
                                 <p>${item.location}</p>
                                 <p>${item.date}</p>
@@ -433,17 +504,18 @@ const openMyProfileModal = async () => {
             </div>
 
              <div class="mt-8">
-                <h3 class="text-lg font-semibold mb-2 border-b pb-2">My Bookings</h3>
-                <div id="bookings-list" class="space-y-2 mt-4">
+                <h3 class="text-lg font-semibold border-t pt-4">My Bookings</h3>
+                <div id="bookings-list" class="mt-2">
                     </div>
             </div>
         </div>
     `;
-    modalContainer.classList.remove('hidden');
     
+    modalContainer.classList.remove('hidden');
+    lucide.createIcons();
+
     const roleSelect = document.getElementById('user-role');
     const talentForm = document.getElementById('become-talent-form');
-    // ✅ THÊM DÒNG NÀY ĐỂ LẤY ELEMENT PORTFOLIO
     const portfolioSection = document.getElementById('talent-portfolio-section');
     
     const setupLocationPicker = () => {
@@ -455,61 +527,208 @@ const openMyProfileModal = async () => {
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(locationPickerMap);
                 locationMarker = L.marker([startLat, startLng], { draggable: true }).addTo(locationPickerMap);
                 locationPickerMap.invalidateSize();
-            }, 100);
+            }, 100); 
         }
     };
 
-    roleSelect.addEventListener('change', () => {
-        if (roleSelect.value === 'talent') {
-            talentForm.classList.remove('hidden');
-            // ✅ HIỂN THỊ LẠI PORTFOLIO SECTION KHI CHUYỂN ROLE
-            portfolioSection.classList.remove('hidden');
-            setupLocationPicker();
-        } else {
-            talentForm.classList.add('hidden');
-            // ✅ ẨN PORTFOLIO SECTION KHI CHUYỂN ROLE
-            portfolioSection.classList.add('hidden');
-            if (locationPickerMap) {
-                locationPickerMap.remove();
-                locationPickerMap = null;
+    if (roleSelect) {
+        roleSelect.addEventListener('change', () => {
+            if (roleSelect.value === 'talent') {
+                talentForm.classList.remove('hidden');
+                portfolioSection.classList.remove('hidden');
+                setupLocationPicker();
+            } else {
+                talentForm.classList.add('hidden');
+                portfolioSection.classList.add('hidden');
+                if (locationPickerMap) {
+                    locationPickerMap.remove();
+                    locationPickerMap = null;
+                }
             }
-        }
-    });
+        });
+    }
 
     if (userData.role === 'talent') {
        setupLocationPicker();
     }
 
-    // Nút "Add Photo" giờ đã tồn tại và có thể gán sự kiện
     if (document.getElementById('add-portfolio-btn')) {
         document.getElementById('add-portfolio-btn').onclick = openPortfolioAddModal;
     }
-    
+
+    const portfolioGallery = document.getElementById('portfolio-gallery');
+    if (portfolioGallery) {
+        portfolioGallery.addEventListener('click', (e) => {
+            const editBtn = e.target.closest('.edit-portfolio-btn');
+            const deleteBtn = e.target.closest('.delete-portfolio-btn');
+
+            if (editBtn) {
+                openPortfolioEditModal(editBtn.dataset.id);
+            }
+            if (deleteBtn) {
+                handleDeletePortfolioItem(deleteBtn.dataset.id);
+            }
+        });
+    }
+
     loadAndRenderBookings(user);
     
     const bookingsListContainer = document.getElementById('bookings-list');
-    bookingsListContainer.addEventListener('click', async (e) => {
-        const user = auth.currentUser;
-        if (!user) return;
+    if (bookingsListContainer) {
+        bookingsListContainer.addEventListener('click', async (e) => {
+            const user = auth.currentUser;
+            if (!user) return;
 
-        if (e.target.classList.contains('review-btn')) {
-            const button = e.target;
-            openReviewModal(button.dataset.bookingId, button.dataset.talentId, button.dataset.talentName);
-        }
-        if (e.target.classList.contains('accept-btn')) {
-            const bookingId = e.target.dataset.bookingId;
-            await updateBookingStatus(bookingId, 'accepted');
-            loadAndRenderBookings(user);
-        }
-        if (e.target.classList.contains('reject-btn')) {
-            const bookingId = e.target.dataset.bookingId;
-            await updateBookingStatus(bookingId, 'rejected');
-            loadAndRenderBookings(user);
-        }
-    });
+            if (e.target.classList.contains('review-btn')) {
+                const button = e.target;
+                openReviewModal(button.dataset.bookingId, button.dataset.talentId, button.dataset.talentName);
+            }
+            if (e.target.classList.contains('accept-btn')) {
+                const bookingId = e.target.dataset.bookingId;
+                await updateBookingStatus(bookingId, 'accepted');
+                loadAndRenderBookings(user);
+            }
+            if (e.target.classList.contains('reject-btn')) {
+                const bookingId = e.target.dataset.bookingId;
+                await updateBookingStatus(bookingId, 'rejected');
+                loadAndRenderBookings(user);
+            }
+            if (e.target.classList.contains('complete-btn')) {
+                const bookingId = e.target.dataset.bookingId;
+                await updateBookingStatus(bookingId, 'completed');
+                loadAndRenderBookings(user);
+            }
+        });
+    }
 
-    document.getElementById('personal-info-form').onsubmit = savePersonalInfo;
-    document.getElementById('become-talent-form').onsubmit = saveTalentProfile;
+    if (document.getElementById('personal-info-form')) {
+        document.getElementById('personal-info-form').onsubmit = savePersonalInfo;
+    }
+    if (document.getElementById('become-talent-form')) {
+        document.getElementById('become-talent-form').onsubmit = saveTalentProfile;
+    }
+};
+
+const openPortfolioEditModal = async (itemId) => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    // Lấy thông tin item cũ
+    const itemRef = doc(db, "professionals", user.uid, "portfolio", itemId);
+    const itemSnap = await getDoc(itemRef);
+
+    if (!itemSnap.exists()) {
+        alert("Photo not found!");
+        return;
+    }
+    const item = itemSnap.data();
+
+    const modalContainer = document.getElementById('portfolio-edit-modal');
+    modalContainer.innerHTML = `
+        <div class="modal-content">
+            <h2 class="text-xl font-bold mb-4">Edit Portfolio Photo</h2>
+            <form id="portfolio-edit-form">
+                <div class="mb-4">
+                    <label>Photo</label>
+                    <img src="${item.imageUrl}" class="w-full h-40 object-cover rounded-md mt-1"/>
+                </div>
+                <div class="mb-4">
+                    <label for="portfolio-edit-location" class="block text-sm font-medium">Location</label>
+                    <input type="text" id="portfolio-edit-location" name="location" value="${item.location}" class="w-full mt-1 border-gray-300 rounded-md">
+                </div>
+                <div class="mb-4">
+                    <label for="portfolio-edit-date" class="block text-sm font-medium">Date</label>
+                    <input type="date" id="portfolio-edit-date" name="date" value="${item.date}" class="w-full mt-1 border-gray-300 rounded-md">
+                </div>
+                <div class="mt-6 flex justify-end space-x-2">
+                    <button type="button" class="close-modal-btn bg-gray-200 px-4 py-2 rounded-full">Cancel</button>
+                    <button type="submit" class="bg-black text-white px-4 py-2 rounded-full">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    `;
+    modalContainer.classList.remove('hidden');
+    
+    // Gán sự kiện submit cho form
+    document.getElementById('portfolio-edit-form').onsubmit = (e) => handleUpdatePortfolioItem(e, itemId);
+};
+
+
+const handleUpdatePortfolioItem = async (e, itemId) => {
+    e.preventDefault();
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const location = document.getElementById('portfolio-edit-location').value;
+    const date = document.getElementById('portfolio-edit-date').value;
+
+    if (!location || !date) {
+        alert("Please fill all fields.");
+        return;
+    }
+
+    const saveBtn = e.target.querySelector('button[type="submit"]');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    try {
+        const itemRef = doc(db, "professionals", user.uid, "portfolio", itemId);
+        await updateDoc(itemRef, {
+            location: location,
+            date: date
+        });
+
+        alert("Portfolio photo updated successfully!");
+        closeAllModals();
+        openMyProfileModal(); // Refresh profile modal
+
+    } catch (error) {
+        console.error("Error updating portfolio item: ", error);
+        alert("Failed to update photo. Please try again.");
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Changes';
+    }
+};
+const handleDeletePortfolioItem = async (itemId) => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    if (!confirm("Are you sure you want to delete this photo? This action cannot be undone.")) {
+        return;
+    }
+
+    try {
+        const itemRef = doc(db, "professionals", user.uid, "portfolio", itemId);
+        const itemSnap = await getDoc(itemRef);
+
+        if (itemSnap.exists()) {
+            const item = itemSnap.data();
+            const imageUrl = item.imageUrl;
+
+            // 1. Xóa file trên Firebase Storage
+            if (imageUrl) {
+                try {
+                    const storageRef = ref(storage, imageUrl);
+                    await deleteObject(storageRef);
+                } catch (storageError) {
+                    console.warn("Could not delete file from Storage, it might be already deleted or rules prevent it:", storageError);
+                }
+            }
+
+            // 2. Xóa document trên Firestore
+            await deleteDoc(itemRef);
+
+            alert("Portfolio photo deleted successfully!");
+            closeAllModals();
+            openMyProfileModal(); // Refresh profile modal
+        } else {
+            alert("Photo not found.");
+        }
+
+    } catch (error) {
+        console.error("Error deleting portfolio item: ", error);
+        alert("Failed to delete photo. Please try again.");
+    }
 };
 
 const openReviewModal = (bookingId, talentId, talentName) => {
@@ -540,8 +759,9 @@ const openReviewModal = (bookingId, talentId, talentName) => {
     lucide.createIcons();
 
     let rating = 0;
-    const stars = document.querySelectorAll('#star-rating-input i');
+    const stars = document.querySelectorAll('#star-rating-input svg');    
     stars.forEach(star => {
+        
         star.addEventListener('mouseover', () => {
             const hoverValue = star.dataset.value;
             stars.forEach(s => {
@@ -550,6 +770,7 @@ const openReviewModal = (bookingId, talentId, talentName) => {
                 s.classList.toggle('text-gray-300', s.dataset.value > hoverValue);
             });
         });
+
         star.addEventListener('mouseout', () => {
              stars.forEach(s => {
                 s.classList.toggle('text-yellow-400', s.dataset.value <= rating);
@@ -557,10 +778,20 @@ const openReviewModal = (bookingId, talentId, talentName) => {
                 s.classList.toggle('text-gray-300', s.dataset.value > rating);
             });
         });
+
         star.addEventListener('click', () => {
+            // 1. Gán giá trị mới
             rating = star.dataset.value;
             document.getElementById('rating-value').value = rating;
-        });
+            
+            stars.forEach(s => {
+                s.classList.toggle('text-yellow-400', s.dataset.value <= rating);
+                s.classList.toggle('fill-current', s.dataset.value <= rating);
+                s.classList.toggle('text-gray-300', s.dataset.value > rating);
+            });
+        }); // <-- Dấu ngoặc của 'click' ở đây
+
+
     });
 
     document.getElementById('review-form').onsubmit = (e) => saveReview(e, bookingId, talentId);
@@ -569,6 +800,14 @@ const openReviewModal = (bookingId, talentId, talentName) => {
 
 const closeAllModals = () => {
     document.querySelectorAll('.modal-backdrop').forEach(modal => modal.classList.add('hidden'));
+    
+    // ✅ THÊM CÁC DÒNG NÀY VÀO
+    const zoomImage = document.getElementById('image-zoom-modal')?.querySelector('img');
+    if (zoomImage) {
+        zoomImage.src = ""; // Xóa src để tránh bị nháy ảnh
+    }
+    // ✅ KẾT THÚC PHẦN THÊM
+
     if (locationPickerMap) {
         locationPickerMap.remove();
         locationPickerMap = null;
@@ -679,6 +918,13 @@ const saveTalentProfile = async (e) => {
         bio: document.getElementById('talent-bio').value,
         lat: coords.lat,
         lng: coords.lng,
+        socials: {
+            facebook: document.getElementById('social-facebook').value,
+            x: document.getElementById('social-twitter').value,
+            instagram: document.getElementById('social-instagram').value,
+            youtube: document.getElementById('social-youtube').value,
+            threads: document.getElementById('social-threads').value
+        }
     };
 
     if (!talentData.service || !talentData.price || !talentData.bio) {
@@ -695,6 +941,55 @@ const saveTalentProfile = async (e) => {
         alert("Failed to save talent profile.");
     }
 };
+
+// const saveReview = async (e, bookingId, talentId) => {
+//     e.preventDefault();
+//     const user = auth.currentUser;
+//     if (!user) return;
+
+//     const rating = document.getElementById('rating-value').value;
+//     const note = document.getElementById('review-note').value;
+
+//     if (rating === "0") {
+//         alert("Please select a star rating.");
+//         return;
+//     }
+
+//     const reviewData = {
+//         talentId: talentId,
+//         clientId: user.uid,
+//         clientName: user.displayName,
+//         rating: parseInt(rating, 10),
+//         note: note,
+//         createdAt: new Date(),
+//         bookingId: bookingId
+//     };
+
+//     try {
+//         const reviewsCol = collection(db, 'reviews');
+//         await setDoc(doc(reviewsCol), reviewData);
+        
+//         const profRef = doc(db, "professionals", talentId);
+//         const reviewsQuery = query(collection(db, "reviews"), where("talentId", "==", talentId));
+        
+//         const querySnapshot = await getDocs(reviewsQuery);
+//         const reviews = querySnapshot.docs.map(doc => doc.data());
+//         const totalRating = reviews.reduce((acc, review) => acc + review.rating, 0);
+//         const averageRating = totalRating / reviews.length;
+//         const reviewCount = reviews.length;
+
+//         await setDoc(profRef, { 
+//             averageRating: averageRating,
+//             reviewCount: reviewCount 
+//         }, { merge: true });
+
+//         alert("Review submitted successfully!");
+//         closeAllModals();
+//     } catch (error) {
+//         console.error("Error submitting review: ", error);
+//         alert("Failed to submit review.");
+//     }
+// };
 
 const saveReview = async (e, bookingId, talentId) => {
     e.preventDefault();
@@ -720,30 +1015,23 @@ const saveReview = async (e, bookingId, talentId) => {
     };
 
     try {
+        // 1. Chỉ cần thêm review mới
         const reviewsCol = collection(db, 'reviews');
-        await setDoc(doc(reviewsCol), reviewData);
+        await addDoc(reviewsCol, reviewData); // Dùng addDoc để tự tạo ID
         
-        const profRef = doc(db, "professionals", talentId);
-        const reviewsQuery = query(collection(db, "reviews"), where("talentId", "==", talentId));
-        
-        const querySnapshot = await getDocs(reviewsQuery);
-        const reviews = querySnapshot.docs.map(doc => doc.data());
-        const totalRating = reviews.reduce((acc, review) => acc + review.rating, 0);
-        const averageRating = totalRating / reviews.length;
-        const reviewCount = reviews.length;
+        // 2. TOÀN BỘ LOGIC CẬP NHẬT TALENT PROFILE ĐÃ BỊ XÓA KHỎI ĐÂY
+        // Cloud Function sẽ tự động làm phần còn lại
 
-        await setDoc(profRef, { 
-            averageRating: averageRating,
-            reviewCount: reviewCount 
-        }, { merge: true });
-
-        alert("Review submitted successfully!");
+        alert("Review submitted successfully! The talent's rating will be updated shortly.");
         closeAllModals();
+
     } catch (error) {
+        // Lỗi sẽ không xảy ra ở đây nữa nếu Rules của bạn đã được publish
         console.error("Error submitting review: ", error);
-        alert("Failed to submit review.");
+        alert("Failed to submit review. " + error.message);
     }
 };
+
 
 // --- AUTHENTICATION ---
 const handleSignIn = () => {
@@ -784,10 +1072,42 @@ onAuthStateChanged(auth, user => {
 
 // --- EVENT LISTENERS ---
 document.addEventListener('click', (e) => {
+    
+    // --- Phần 1: Xử lý Modal Phóng to Ảnh ---
+    const zoomModal = document.getElementById('image-zoom-modal');
+    if (zoomModal) { 
+        
+        // Logic MỞ ảnh
+        if (e.target.classList.contains('zoomable-img')) {
+            const zoomImage = zoomModal.querySelector('img');
+            zoomImage.src = e.target.src;
+            zoomModal.classList.remove('hidden');
+            return; // Đã xử lý, không làm gì thêm
+        }
+
+        // Logic ĐÓNG ảnh
+        if (!zoomModal.classList.contains('hidden') && 
+            (e.target.id === 'image-zoom-modal' || e.target.parentElement.id === 'image-zoom-modal')) 
+        {
+            const zoomImage = zoomModal.querySelector('img');
+            if (zoomImage) {
+                zoomImage.src = "";
+            }
+            zoomModal.classList.add('hidden');
+            return; // Đã xử lý, không làm gì thêm
+        }
+    }
+
+    // --- Phần 2: Xử lý các Modal Gốc (Profile, Booking, v.v.) ---
+    
+    // Nếu click vào một nút "close" HOẶC nền mờ (backdrop)
     if (e.target.closest('.close-modal-btn') || e.target.classList.contains('modal-backdrop')) {
+        // (Chúng ta đã return ở trên nếu click là của zoomModal, nên code này an toàn)
         closeAllModals();
     }
 });
+
+
 
 resultsList.addEventListener('click', (e) => {
     const viewBtn = e.target.closest('.view-profile-btn');
