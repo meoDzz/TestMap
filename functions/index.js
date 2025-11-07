@@ -66,3 +66,4 @@ exports.updateTalentRating = onDocumentCreated("reviews/{reviewId}", async (even
         return null;
     }
 });
+

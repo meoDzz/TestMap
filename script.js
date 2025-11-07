@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 // NEW: Import Firestore and add addDoc for subcollections
-import { getFirestore, collection, getDocs, doc, setDoc, getDoc, query, where, updateDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, collection, getDocs, doc, setDoc, getDoc, query, where, updateDoc, addDoc, deleteDoc,onSnapshot, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 // NEW: Import Storage modules
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 const firebaseConfig = {
@@ -290,14 +290,83 @@ const getStatusBadge = (status) => {
 
 
 // NEW: Function to load and render bookings for the current user
+// const loadAndRenderBookings = async (user) => {
+//     const bookingsListContainer = document.getElementById('bookings-list');
+//     bookingsListContainer.innerHTML = '<p class="text-gray-500">Loading bookings...</p>';
+
+//     // Query 1: Bookings the user made (as a client)
+//     const clientBookingsQuery = query(collection(db, "bookings"), where("clientId", "==", user.uid));
+    
+//     // Query 2: Bookings for the user (as a talent)
+//     const talentBookingsQuery = query(collection(db, "bookings"), where("talentId", "==", user.uid));
+    
+//     const [clientBookingsSnapshot, talentBookingsSnapshot] = await Promise.all([
+//         getDocs(clientBookingsQuery),
+//         getDocs(talentBookingsQuery)
+//     ]);
+
+//     const clientBookings = clientBookingsSnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
+//     const talentBookings = talentBookingsSnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
+
+//     let html = '';
+
+//     // Render bookings the user made
+//     html += '<h4 class="text-md font-semibold mt-4">Bookings I\'ve Made</h4>';
+//     if (clientBookings.length > 0) {
+//         html += clientBookings.map(booking => `
+//             <div class="flex justify-between items-center p-2 border-b">
+//                 <div>
+//                     <p class="font-semibold">Booking for: ${booking.talentName}</p>
+//                     <p class="text-sm text-gray-500">${new Date(booking.createdAt.seconds * 1000).toLocaleDateString()}</p>
+//                 </div>
+//                 <div class="flex items-center space-x-2">
+//                      <p class="text-sm font-semibold capitalize px-2 py-1 rounded-full ${getStatusBadge(booking.status)}">${booking.status}</p>
+//                      ${booking.status === 'completed' ? `<button class="review-btn bg-blue-500 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-600" data-booking-id="${booking.id}" data-talent-id="${booking.talentId}" data-talent-name="${booking.talentName}">Review</button>` : ''}
+//                 </div>
+//             </div>
+//         `).join('');
+//     } else {
+//         html += '<p class="text-sm text-gray-500">You haven\'t made any bookings yet.</p>';
+//     }
+
+//     // Render bookings for the user (as a talent)
+//     html += '<h4 class="text-md font-semibold mt-8">Bookings for Me</h4>';
+//     if (talentBookings.length > 0) {
+//         html += talentBookings.map(booking => `
+//             <div class="flex justify-between items-center p-2 border-b">
+//                 <div>
+//                     <p class="font-semibold">Booking from: ${booking.clientName}</p>
+//                     <p class="text-sm text-gray-500">${new Date(booking.createdAt.seconds * 1000).toLocaleDateString()}</p>
+//                 </div>
+//                 <div class="flex items-center space-x-2">
+//                      ${booking.status === 'pending' ? `
+//                         <button class="accept-btn bg-green-500 text-white px-3 py-1 rounded-full text-sm hover:bg-green-600" data-booking-id="${booking.id}">Accept</button>
+//                         <button class="reject-btn bg-red-500 text-white px-3 py-1 rounded-full text-sm hover:bg-red-600" data-booking-id="${booking.id}">Reject</button>
+//                      ` : booking.status === 'accepted' ? `
+//                         <button class="complete-btn bg-blue-500 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-600" data-booking-id="${booking.id}">Mark as Complete</button>
+//                      ` : `
+//                         <p class="text-sm font-semibold capitalize px-2 py-1 rounded-full ${getStatusBadge(booking.status)}">${booking.status}</p>
+//                      `}
+//                 </div>
+//             </div>
+//         `).join('');
+//     } else {
+//         html += '<p class="text-sm text-gray-500">You don\'t have any booking requests.</p>';
+//     }
+
+//     bookingsListContainer.innerHTML = html;
+// };
+
+// ✅ BƯỚC 2: THAY THẾ HÀM CŨ BẰNG HÀM MỚI NÀY
+
 const loadAndRenderBookings = async (user) => {
     const bookingsListContainer = document.getElementById('bookings-list');
     bookingsListContainer.innerHTML = '<p class="text-gray-500">Loading bookings...</p>';
 
-    // Query 1: Bookings the user made (as a client)
+    // Query 1: Bookings người dùng đã tạo (vai trò Client)
     const clientBookingsQuery = query(collection(db, "bookings"), where("clientId", "==", user.uid));
     
-    // Query 2: Bookings for the user (as a talent)
+    // Query 2: Bookings cho người dùng (vai trò Talent)
     const talentBookingsQuery = query(collection(db, "bookings"), where("talentId", "==", user.uid));
     
     const [clientBookingsSnapshot, talentBookingsSnapshot] = await Promise.all([
@@ -310,10 +379,14 @@ const loadAndRenderBookings = async (user) => {
 
     let html = '';
 
-    // Render bookings the user made
-    html += '<h4 class="text-md font-semibold mt-4">Bookings I\'ve Made</h4>';
+    // --- Render bookings người dùng đã tạo (Client view) ---
+    html += '<h4 class="text-md font-semibold mt-4">Bookings I\'ve Made (Gửi cho Thợ)</h4>';
     if (clientBookings.length > 0) {
-        html += clientBookings.map(booking => `
+        // Dùng Promise.all để lấy ảnh cho tất cả talent
+        const clientHtml = await Promise.all(clientBookings.map(async (booking) => {
+            // Lấy ảnh của talent
+            const talentPhoto = await getUserPhoto(booking.talentId);
+            return `
             <div class="flex justify-between items-center p-2 border-b">
                 <div>
                     <p class="font-semibold">Booking for: ${booking.talentName}</p>
@@ -321,43 +394,64 @@ const loadAndRenderBookings = async (user) => {
                 </div>
                 <div class="flex items-center space-x-2">
                      <p class="text-sm font-semibold capitalize px-2 py-1 rounded-full ${getStatusBadge(booking.status)}">${booking.status}</p>
-                     ${booking.status === 'completed' ? `<button class="review-btn bg-blue-500 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-600" data-booking-id="${booking.id}" data-talent-id="${booking.talentId}" data-talent-name="${booking.talentName}">Review</button>` : ''}
+                     
+                     <button class="message-btn-client bg-blue-500 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-600" 
+                        data-talent-id="${booking.talentId}" 
+                        data-talent-name="${booking.talentName}" 
+                        data-talent-photo="${talentPhoto}">
+                        Message
+                     </button>
+                     
+                     ${booking.status === 'completed' ? `<button class="review-btn bg-green-500 text-white px-3 py-1 rounded-full text-sm hover:bg-green-600" data-booking-id="${booking.id}" data-talent-id="${booking.talentId}" data-talent-name="${booking.talentName}">Review</button>` : ''}
                 </div>
             </div>
-        `).join('');
+        `;
+        }));
+        html += clientHtml.join('');
     } else {
         html += '<p class="text-sm text-gray-500">You haven\'t made any bookings yet.</p>';
     }
 
-    // Render bookings for the user (as a talent)
-    html += '<h4 class="text-md font-semibold mt-8">Bookings for Me</h4>';
+    // --- Render bookings cho người dùng (Talent view) ---
+    html += '<h4 class="text-md font-semibold mt-8">Bookings for Me (Gửi cho Khách)</h4>';
     if (talentBookings.length > 0) {
-        html += talentBookings.map(booking => `
+        // Dùng Promise.all để lấy ảnh cho tất cả client
+        const talentHtml = await Promise.all(talentBookings.map(async (booking) => {
+            // Lấy ảnh của client
+            const clientPhoto = await getUserPhoto(booking.clientId);
+            return `
             <div class="flex justify-between items-center p-2 border-b">
                 <div>
                     <p class="font-semibold">Booking from: ${booking.clientName}</p>
                     <p class="text-sm text-gray-500">${new Date(booking.createdAt.seconds * 1000).toLocaleDateString()}</p>
                 </div>
                 <div class="flex items-center space-x-2">
+                     <button class="message-btn-talent bg-blue-500 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-600"
+                        data-client-id="${booking.clientId}"
+                        data-client-name="${booking.clientName}"
+                        data-client-photo="${clientPhoto}">
+                        Message
+                     </button>
+
                      ${booking.status === 'pending' ? `
                         <button class="accept-btn bg-green-500 text-white px-3 py-1 rounded-full text-sm hover:bg-green-600" data-booking-id="${booking.id}">Accept</button>
                         <button class="reject-btn bg-red-500 text-white px-3 py-1 rounded-full text-sm hover:bg-red-600" data-booking-id="${booking.id}">Reject</button>
                      ` : booking.status === 'accepted' ? `
-                        <button class="complete-btn bg-blue-500 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-600" data-booking-id="${booking.id}">Mark as Complete</button>
+                        <button class="complete-btn bg-purple-500 text-white px-3 py-1 rounded-full text-sm hover:bg-purple-600" data-booking-id="${booking.id}">Mark as Complete</button>
                      ` : `
                         <p class="text-sm font-semibold capitalize px-2 py-1 rounded-full ${getStatusBadge(booking.status)}">${booking.status}</p>
                      `}
                 </div>
             </div>
-        `).join('');
+        `;
+        }));
+        html += talentHtml.join('');
     } else {
         html += '<p class="text-sm text-gray-500">You don\'t have any booking requests.</p>';
     }
 
     bookingsListContainer.innerHTML = html;
-};
-
-
+}; 
 
 
 const openMyProfileModal = async () => {
@@ -573,30 +667,49 @@ const openMyProfileModal = async () => {
 
     loadAndRenderBookings(user);
     
-    const bookingsListContainer = document.getElementById('bookings-list');
+const bookingsListContainer = document.getElementById('bookings-list');
     if (bookingsListContainer) {
         bookingsListContainer.addEventListener('click', async (e) => {
             const user = auth.currentUser;
             if (!user) return;
 
-            if (e.target.classList.contains('review-btn')) {
+            const target = e.target; // Lấy phần tử đã click
+
+            // --- Xử lý cho nút "Message" (Client -> Talent) ---
+            if (target.classList.contains('message-btn-client')) {
+                const { talentId, talentName, talentPhoto } = target.dataset;
+                openChatModal(talentId, talentName, talentPhoto);
+                return; // Đã xử lý, thoát
+            }
+            
+            // --- Xử lý cho nút "Message" (Talent -> Client) ---
+            if (target.classList.contains('message-btn-talent')) {
+                const { clientId, clientName, clientPhoto } = target.dataset;
+                // Hàm openChatModal của chúng ta được thiết kế để chat với "Talent"
+                // nên chúng ta sẽ "giả" client như là talent để hàm hoạt động
+                openChatModal(clientId, clientName, clientPhoto);
+                return; // Đã xử lý, thoát
+            }
+
+            // --- Code cũ của bạn (vẫn giữ nguyên) ---
+            if (target.classList.contains('review-btn')) {
                 const button = e.target;
                 openReviewModal(button.dataset.bookingId, button.dataset.talentId, button.dataset.talentName);
             }
-            if (e.target.classList.contains('accept-btn')) {
+            if (target.classList.contains('accept-btn')) {
                 const bookingId = e.target.dataset.bookingId;
                 await updateBookingStatus(bookingId, 'accepted');
-                loadAndRenderBookings(user);
+                loadAndRenderBookings(user); // Tải lại
             }
-            if (e.target.classList.contains('reject-btn')) {
+            if (target.classList.contains('reject-btn')) {
                 const bookingId = e.target.dataset.bookingId;
                 await updateBookingStatus(bookingId, 'rejected');
-                loadAndRenderBookings(user);
+                loadAndRenderBookings(user); // Tải lại
             }
-            if (e.target.classList.contains('complete-btn')) {
+            if (target.classList.contains('complete-btn')) {
                 const bookingId = e.target.dataset.bookingId;
                 await updateBookingStatus(bookingId, 'completed');
-                loadAndRenderBookings(user);
+                loadAndRenderBookings(user); // Tải lại
             }
         });
     }
@@ -1221,3 +1334,184 @@ document.addEventListener('DOMContentLoaded', () => {
     renderProfessionals([]);
     renderMap([]);
 });
+
+
+
+
+
+const getUserPhoto = async (userId) => {
+    if (!userId) return 'https://placehold.co/40x40'; // Ảnh mặc định nếu không có ID
+    try {
+        const userDocRef = doc(db, "users", userId);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+            return userDoc.data().photoURL || 'https://placehold.co/40x40';
+        }
+        return 'https://placehold.co/40x40';
+    } catch (error) {
+        console.error("Error fetching user photo: ", error);
+        return 'https://placehold.co/40x40';
+    }
+};
+
+
+// ✅ BƯỚC 1: DÁN TOÀN BỘ KHỐI CODE NÀY VÀO script.js
+
+// Biến toàn cục để lưu hàm `unsubscribeFromMessages` của onSnapshot
+let unsubscribeFromMessages = null;
+
+// Hàm mở Modal Chat
+const openChatModal = async (talentId, talentName, talentPhoto) => {
+    const user = auth.currentUser;
+    if (!user) {
+        alert("Please sign in to chat.");
+        return;
+    }
+
+    closeAllModals(); // Đóng các modal khác
+
+    // Tạo ID cho chat room, luôn sắp xếp theo ABC để đảm bảo là duy nhất
+    const chatId = [user.uid, talentId].sort().join('_');
+    
+    const modalContainer = document.getElementById('chat-modal'); // Giả sử bạn có <div id="chat-modal"> trong HTML
+    
+    // Nếu chưa có, tạo modal chat
+    if (!modalContainer) {
+        const chatModalDiv = document.createElement('div');
+        chatModalDiv.id = 'chat-modal';
+        chatModalDiv.className = 'modal-backdrop hidden';
+        document.body.appendChild(chatModalDiv);
+    }
+    
+    document.getElementById('chat-modal').innerHTML = `
+        <div class="modal-content modal-chat" style="max-width: 600px; display: flex; flex-direction: column; height: 70vh;">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h2 class="text-xl font-bold">Chat with ${talentName}</h2>
+                <button class="close-modal-btn text-2xl">&times;</button>
+            </div>
+            
+            <div id="chat-messages" class"flex flex-col space-y-2 mb-4" style="flex-grow: 1; overflow-y: auto; padding: 1rem; background-color: #f9fafb; border-radius: 0.5rem; border: 1px solid #e5e7eb;">
+                <p class="text-center text-gray-500">Loading messages...</p>
+            </div>
+            
+            <form id="chat-send-form" class="flex space-x-2">
+                <input type="text" id="chat-message-input" placeholder="Type a message..." class="flex-1 border-gray-300 rounded-full px-4" required>
+                <button type="submit" class="bg-black text-white rounded-full p-2 flex items-center justify-center">
+                    <i data-lucide="send" class="w-5 h-5"></i>
+                </button>
+            </form>
+        </div>
+    `;
+    document.getElementById('chat-modal').classList.remove('hidden');
+    lucide.createIcons();
+
+    // 1. Khởi tạo (hoặc cập nhật) document cho chat
+    const chatRef = doc(db, "chats", chatId);
+    await setDoc(chatRef, {
+        participants: [user.uid, talentId],
+        // Lưu cả hai chiều để dễ dàng query sau này
+        clientName: user.uid === talentId ? talentName : user.displayName,
+        talentName: user.uid === talentId ? user.displayName : talentName,
+        clientPhoto: user.uid === talentId ? talentPhoto : user.photoURL,
+        talentPhoto: user.uid === talentId ? user.photoURL : talentPhoto,
+        talentId: user.uid === talentId ? user.uid : talentId, // ID của talent
+        clientId: user.uid === talentId ? talentId : user.uid, // ID của client
+    }, { merge: true });
+
+    // 2. Gán sự kiện cho form gửi
+    document.getElementById('chat-send-form').onsubmit = (e) => 
+        handleSendMessage(e, chatId);
+    
+    // 3. Lắng nghe tin nhắn mới
+    listenForMessages(chatId);
+};
+
+// Hàm lắng nghe tin nhắn (Real-time)
+const listenForMessages = (chatId) => {
+    const messagesContainer = document.getElementById('chat-messages');
+    
+    // Hủy đăng ký listener cũ (nếu có)
+    if (unsubscribeFromMessages) {
+        unsubscribeFromMessages();
+    }
+
+    const messagesCol = collection(db, "chats", chatId, "messages");
+    const q = query(messagesCol, orderBy("createdAt", "asc"));
+
+    unsubscribeFromMessages = onSnapshot(q, (snapshot) => {
+        if (!messagesContainer) return; // Kiểm tra nếu modal đã bị đóng
+        messagesContainer.innerHTML = ''; // Xóa tin nhắn cũ
+        
+        if (snapshot.empty) {
+            messagesContainer.innerHTML = '<p class="text-center text-gray-500">No messages yet. Say hello!</p>';
+            return;
+        }
+
+        snapshot.forEach(doc => {
+            const msg = doc.data();
+            const isSentByMe = msg.senderId === auth.currentUser.uid;
+            
+            const msgElement = document.createElement('div');
+            // Thêm style cho tin nhắn
+            msgElement.style.padding = '0.5rem 0.75rem';
+            msgElement.style.borderRadius = '1rem';
+            msgElement.style.marginBottom = '0.5rem';
+            msgElement.style.maxWidth = '75%';
+            
+            if (isSentByMe) {
+                msgElement.style.backgroundColor = '#000';
+                msgElement.style.color = 'white';
+                msgElement.style.alignSelf = 'flex-end';
+                msgElement.style.marginLeft = 'auto';
+                msgElement.style.borderBottomRightRadius = '0.25rem';
+            } else {
+                msgElement.style.backgroundColor = '#e5e7eb';
+                msgElement.style.color = '#1f2937';
+                msgElement.style.alignSelf = 'flex-start';
+                msgElement.style.borderBottomLeftRadius = '0.25rem';
+            }
+            
+            msgElement.textContent = msg.text;
+            messagesContainer.appendChild(msgElement);
+        });
+
+        // Tự động cuộn xuống dưới
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    });
+};
+
+// Hàm gửi tin nhắn
+const handleSendMessage = async (e, chatId) => {
+    e.preventDefault();
+    const user = auth.currentUser;
+    const input = document.getElementById('chat-message-input');
+    if (!input) return;
+    
+    const text = input.value.trim();
+
+    if (!text || !user) return;
+
+    input.value = ''; // Xóa input ngay
+
+    try {
+        // 1. Thêm tin nhắn mới vào subcollection
+        const messagesCol = collection(db, "chats", chatId, "messages");
+        await addDoc(messagesCol, {
+            senderId: user.uid,
+            text: text,
+            createdAt: serverTimestamp() // Dùng serverTimestamp
+        });
+
+        // 2. Cập nhật tin nhắn cuối cùng lên document cha
+        const chatRef = doc(db, "chats", chatId);
+        await updateDoc(chatRef, {
+            lastMessage: text,
+            lastMessageAt: serverTimestamp()
+        });
+
+    } catch (error) {
+        console.error("Error sending message: ", error);
+        alert("Could not send message.");
+        input.value = text; // Trả lại tin nhắn nếu gửi lỗi
+    }
+};
